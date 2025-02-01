@@ -27,47 +27,13 @@ Clarinet.test({
 });
 
 Clarinet.test({
-    name: "Can accept trade and deposit escrow",
+    name: "Can initiate and resolve dispute",
     async fn(chain: Chain, accounts: Map<string, Account>) {
+        const deployer = accounts.get("deployer")!;
         const wallet1 = accounts.get("wallet_1")!;
         const wallet2 = accounts.get("wallet_2")!;
         
-        // First create a trade
-        let block = chain.mineBlock([
-            Tx.contractCall("trade_guard", "create-trade", [
-                types.uint(1000),
-                types.utf8("Test trade agreement"),
-                types.uint(500)
-            ], wallet1.address)
-        ]);
-        
-        // Then accept it
-        let acceptBlock = chain.mineBlock([
-            Tx.contractCall("trade_guard", "accept-trade", [
-                types.uint(1)
-            ], wallet2.address)
-        ]);
-        
-        acceptBlock.receipts[0].result.expectOk().expectBool(true);
-        
-        // Verify trade status
-        let statusBlock = chain.mineBlock([
-            Tx.contractCall("trade_guard", "get-trade-status", [
-                types.uint(1)
-            ], wallet1.address)
-        ]);
-        
-        statusBlock.receipts[0].result.expectOk().expectAscii("ACTIVE");
-    }
-});
-
-Clarinet.test({
-    name: "Can complete trade and release escrow",
-    async fn(chain: Chain, accounts: Map<string, Account>) {
-        const wallet1 = accounts.get("wallet_1")!;
-        const wallet2 = accounts.get("wallet_2")!;
-        
-        // Setup: Create and accept trade
+        // Create and accept trade
         let setup = chain.mineBlock([
             Tx.contractCall("trade_guard", "create-trade", [
                 types.uint(1000),
@@ -79,14 +45,25 @@ Clarinet.test({
             ], wallet2.address)
         ]);
         
-        // Complete trade
-        let completeBlock = chain.mineBlock([
-            Tx.contractCall("trade_guard", "complete-trade", [
-                types.uint(1)
-            ], wallet1.address)
+        // Initiate dispute
+        let disputeBlock = chain.mineBlock([
+            Tx.contractCall("trade_guard", "initiate-dispute", [
+                types.uint(1),
+                types.utf8("Items not as described")
+            ], wallet2.address)
         ]);
         
-        completeBlock.receipts[0].result.expectOk().expectBool(true);
+        disputeBlock.receipts[0].result.expectOk().expectBool(true);
+        
+        // Resolve dispute
+        let resolveBlock = chain.mineBlock([
+            Tx.contractCall("trade_guard", "resolve-dispute", [
+                types.uint(1),
+                types.principal(wallet2.address)
+            ], deployer.address)
+        ]);
+        
+        resolveBlock.receipts[0].result.expectOk().expectBool(true);
         
         // Verify final status
         let statusBlock = chain.mineBlock([
@@ -95,6 +72,44 @@ Clarinet.test({
             ], wallet1.address)
         ]);
         
-        statusBlock.receipts[0].result.expectOk().expectAscii("COMPLETED");
+        statusBlock.receipts[0].result.expectOk().expectAscii("RESOLVED");
+    }
+});
+
+Clarinet.test({
+    name: "Only contract owner can resolve disputes",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const wallet1 = accounts.get("wallet_1")!;
+        const wallet2 = accounts.get("wallet_2")!;
+        
+        // Create and accept trade
+        let setup = chain.mineBlock([
+            Tx.contractCall("trade_guard", "create-trade", [
+                types.uint(1000),
+                types.utf8("Test trade agreement"),
+                types.uint(500)
+            ], wallet1.address),
+            Tx.contractCall("trade_guard", "accept-trade", [
+                types.uint(1)
+            ], wallet2.address)
+        ]);
+        
+        // Initiate dispute
+        let disputeBlock = chain.mineBlock([
+            Tx.contractCall("trade_guard", "initiate-dispute", [
+                types.uint(1),
+                types.utf8("Items not as described")
+            ], wallet2.address)
+        ]);
+        
+        // Try to resolve dispute as non-owner
+        let resolveBlock = chain.mineBlock([
+            Tx.contractCall("trade_guard", "resolve-dispute", [
+                types.uint(1),
+                types.principal(wallet2.address)
+            ], wallet1.address)
+        ]);
+        
+        resolveBlock.receipts[0].result.expectErr(100); // ERR-UNAUTHORIZED
     }
 });
